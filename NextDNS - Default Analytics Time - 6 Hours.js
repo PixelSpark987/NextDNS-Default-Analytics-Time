@@ -4,6 +4,8 @@
 // @author       PixelSpark987 - https://is.gd/PS987
 // @icon         https://my.nextdns.io/favicon.ico
 // @version      1.2
+// @downloadURL  https://raw.githubusercontent.com/PixelSpark987/NextDNS-Default-Analytics-Time/refs/heads/main/NextDNS%20-%20Default%20Analytics%20Time%20-%206%20Hours.js
+// @updateURL    https://raw.githubusercontent.com/PixelSpark987/NextDNS-Default-Analytics-Time/refs/heads/main/NextDNS%20-%20Default%20Analytics%20Time%20-%206%20Hours.js
 // @namespace    http://tampermonkey.net/
 // @match        *://my.nextdns.io/*/analytics
 // @grant        none
