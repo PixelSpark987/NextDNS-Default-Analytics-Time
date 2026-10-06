@@ -3,7 +3,7 @@
 // @description  Forces NextDNS to show the last 6 hours in Analytics
 // @author       PixelSpark987 - https://is.gd/PS987
 // @icon         https://my.nextdns.io/favicon.ico
-// @version      1.2
+// @version      1.6
 // @downloadURL  https://raw.githubusercontent.com/PixelSpark987/NextDNS-Default-Analytics-Time/refs/heads/main/NextDNS%20-%20Default%20Analytics%20Time%20-%206%20Hours.js
 // @updateURL    https://raw.githubusercontent.com/PixelSpark987/NextDNS-Default-Analytics-Time/refs/heads/main/NextDNS%20-%20Default%20Analytics%20Time%20-%206%20Hours.js
 // @namespace    http://tampermonkey.net/
@@ -11,106 +11,113 @@
 // @grant        none
 // ==/UserScript==
 
-// ==============================================================================
-// --- DESKTOP LOGIC ---
-// ==============================================================================
+// Wrap everything in an Immediately Invoked Function Expression (IIFE) to avoid cluttering global window scope.
 (function() {
+    // Enforce strict mode to prevent accidental implicit globals and catch silent errors.
     'use strict';
 
+    // Flag variable used as a lock to prevent duplicate execution when MutationObserver triggers rapid events.
+    let isProcessing = false;
+
+    // Helper function that accepts a DOM element and fires a sequence of click events on it.
     const triggerClick = (el) => {
-        const event = new MouseEvent('click', {
-            view: window,
-            bubbles: true,
-            cancelable: true
+        // Loop through touch and click event types to ensure full compatibility across mobile and desktop browsers.
+        ['touchstart', 'touchend', 'click'].forEach(type => {
+            // Dispatch a synthetic Event marked as bubbling and cancelable so React synthetic event listeners pick it up.
+            el.dispatchEvent(new Event(type, { bubbles: true, cancelable: true }));
         });
-        el.dispatchEvent(event);
     };
 
-    const setTimeframeDesktop = () => {
-        if (!window.location.pathname.includes('/analytics')) return;
+    // Primary function responsible for finding the dropdown, expanding it, and selecting the 6-hour timeframe.
+    const selectSixHours = () => {
+        // If an operation is already in progress, or if the current URL path isn't analytics, abort execution immediately.
+        if (isProcessing || !window.location.pathname.includes('/analytics')) return;
 
-        // 1. Find the main dropdown button
-        const dropdown = Array.from(document.querySelectorAll('button'))
-            .find(b => b.innerText && b.innerText.includes('Last '));
+        // Query all elements with the '.dropdown-toggle' class on the page and convert the NodeList to an Array.
+        const toggleBtn = Array.from(document.querySelectorAll('.dropdown-toggle'))
+            // Find the button element whose visible text content includes the phrase 'Last '.
+            .find(btn => btn.textContent && btn.textContent.includes('Last '));
 
-        if (dropdown && !dropdown.innerText.includes('6 hours')) {
-            triggerClick(dropdown);
+        // LINE 33 (Target string check 1/3): If no toggle button is found, or if it already reads 'Last 6 hours', abort execution.
+        if (!toggleBtn || toggleBtn.textContent.trim() === 'Last 6 hours') return;
 
-            // 2. Wait for the menu items to appear
-            setTimeout(() => {
-                // NextDNS usually puts these in a portal/dropdown list at the end of the body
-                const options = Array.from(document.querySelectorAll('button, [role="menuitem"], .dropdown-item'));
-                const target = options.find(o => o.innerText && o.innerText.toLowerCase().includes('6 hours'));
+        // Activate the processing lock to freeze additional observer calls while running this selection sequence.
+        isProcessing = true;
 
-                if (target) {
-                    triggerClick(target);
-                    // Close the menu if it stays open
-                    dropdown.blur();
-                }
-            }, 150);
+        // LINE 40 (Target string check 2/3): Query menu items to see if the target option 'Last 6 hours' is already present in the DOM.
+        let targetOption = Array.from(document.querySelectorAll('.dropdown-menu .dropdown-item'))
+            // Filter array to find the item matching our target text string.
+            .find(opt => opt.textContent && opt.textContent.trim() === 'Last 6 hours');
+
+        // If the dropdown option is already visible/rendered, click it directly without re-opening the menu.
+        if (targetOption) {
+            // Trigger our click helper on the discovered option element.
+            triggerClick(targetOption);
+            // Set a 300ms delay to release the execution lock after React handles the DOM update.
+            setTimeout(() => { isProcessing = false; }, 300);
+            // Return early to finish execution.
+            return;
         }
+
+        // Check if the dropdown menu is collapsed by inspecting its 'aria-expanded' HTML attribute.
+        if (toggleBtn.getAttribute('aria-expanded') !== 'true') {
+            // Fire a click event on the toggle button to trigger the React state change that opens the menu.
+            triggerClick(toggleBtn);
+        }
+
+        // Initialize a step counter to keep track of how many polling attempts have occurred.
+        let attempts = 0;
+        // Start a zero-delay interval timer to repeatedly scan the DOM on every available thread tick.
+        const checkInterval = setInterval(() => {
+            // Increment the counter on each tick iteration.
+            attempts++;
+
+            // LINE 60 (Target string check 3/3): Search the DOM specifically for the target '.dropdown-menu .dropdown-item' containing 'Last 6 hours'.
+            targetOption = Array.from(document.querySelectorAll('.dropdown-menu .dropdown-item'))
+                // Filter the elements by their trimmed text content.
+                .find(opt => opt.textContent && opt.textContent.trim() === 'Last 6 hours');
+
+            // Check if our targeted menu item has appeared in the DOM tree.
+            if (targetOption) {
+                // Clear the active interval timer to stop polling immediately.
+                clearInterval(checkInterval);
+                // Dispatch the synthetic click events to select the 'Last 6 hours' option.
+                triggerClick(targetOption);
+                // Schedule unlocking of the processing flag after 300ms to allow React UI state to stabilize.
+                setTimeout(() => { isProcessing = false; }, 300);
+            // Fallback check: If target hasn't appeared after 200 ticks (~200ms), terminate loop to prevent runaway background execution.
+            } else if (attempts > 200) {
+                // Clear the interval timer to stop polling.
+                clearInterval(checkInterval);
+                // Release processing lock so future DOM mutations can attempt again if needed.
+                isProcessing = false;
+            }
+        }, 0); // Pass 0 milliseconds to execute polling at the maximum speed allowed by the browser engine.
     };
 
-    // Watch for page navigation
-    let lastUrl = location.href;
+    // Initialize a tracking variable to manage requestAnimationFrame scheduling state.
+    let pending = false;
+
+    // Create a MutationObserver instance to detect dynamically rendered content changes in the SPA.
     const observer = new MutationObserver(() => {
-        if (location.href !== lastUrl) {
-            lastUrl = location.href;
-            setTimeout(setTimeframeDesktop, 600);
-        }
+        // Exit early if a check is already pending, processing is locked, or current path is not analytics.
+        if (pending || isProcessing || !window.location.pathname.includes('/analytics')) return;
+
+        // Set pending flag to true to lock out duplicate observer callbacks on the same frame.
+        pending = true;
+
+        // Pass selection execution to requestAnimationFrame to align with the browser paint cycle and prevent layout thrashing.
+        requestAnimationFrame(() => {
+            // Run the selection routine.
+            selectSixHours();
+            // Reset the pending flag once the frame executes.
+            pending = false;
+        });
     });
-    observer.observe(document.body, { subtree: true, childList: true });
 
-    // Run on initial load
-    setTimeout(setTimeframeDesktop, 1200);
-})();
+    // Configure the observer to watch the document body for added/removed nodes and deep subtree mutations.
+    observer.observe(document.body, { childList: true, subtree: true });
 
-// ==============================================================================
-// --- MOBILE LOGIC ---
-// ==============================================================================
-(function() {
-    'use strict';
-
-    const setTimeframeMobile = () => {
-        if (!window.location.pathname.includes('/analytics')) return;
-
-        // 1. Find the timeframe selector (looks for the "Last X" text)
-        const elements = document.querySelectorAll('button, div, span');
-        const dropdown = Array.from(elements).find(el =>
-            el.innerText && /^Last\s.*\d+/i.test(el.innerText.trim()) && el.offsetWidth > 0
-        );
-
-        if (dropdown && !dropdown.innerText.includes('6 hours')) {
-            dropdown.click();
-
-            // 2. Mobile menus take a moment to animate in
-            setTimeout(() => {
-                // Look for the option in the entire document since mobile menus
-                // are often attached to the end of the <body>
-                const options = document.querySelectorAll('button, div, span, li');
-                const target = Array.from(options).find(o =>
-                    o.innerText && o.innerText.trim() === 'Last 6 hours'
-                );
-
-                if (target) {
-                    // Use a sequence of events to ensure the mobile browser registers it
-                    ['touchstart', 'touchend', 'click'].forEach(type => {
-                        target.dispatchEvent(new Event(type, { bubbles: true }));
-                    });
-                }
-            }, 400); // 400ms allows for the slide-up animation to finish
-        }
-    };
-
-    // Watch for internal navigation
-    let lastUrl = location.href;
-    new MutationObserver(() => {
-        if (location.href !== lastUrl) {
-            lastUrl = location.href;
-            setTimeout(setTimeframeMobile, 800);
-        }
-    }).observe(document.body, { subtree: true, childList: true });
-
-    // Initial load check
-    setTimeout(setTimeframeMobile, 1500);
+    // Execute an initial manual call on script injection to handle scenarios where the target element is already present on page load.
+    selectSixHours();
 })();
