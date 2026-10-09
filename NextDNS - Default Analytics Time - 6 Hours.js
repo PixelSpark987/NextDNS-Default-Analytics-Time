@@ -3,11 +3,11 @@
 // @description  Forces NextDNS to show the last 6 hours in Analytics
 // @author       PixelSpark987 - https://is.gd/PS987
 // @icon         https://my.nextdns.io/favicon.ico
-// @version      1.6
+// @version      1.7
 // @downloadURL  https://raw.githubusercontent.com/PixelSpark987/NextDNS-Default-Analytics-Time/refs/heads/main/NextDNS%20-%20Default%20Analytics%20Time%20-%206%20Hours.js
 // @updateURL    https://raw.githubusercontent.com/PixelSpark987/NextDNS-Default-Analytics-Time/refs/heads/main/NextDNS%20-%20Default%20Analytics%20Time%20-%206%20Hours.js
 // @namespace    http://tampermonkey.net/
-// @match        *://my.nextdns.io/*/analytics
+// @match        *://my.nextdns.io/*
 // @grant        none
 // ==/UserScript==
 
@@ -18,6 +18,9 @@
 
     // Flag variable used as a lock to prevent duplicate execution when MutationObserver triggers rapid events.
     let isProcessing = false;
+
+    // Track the last seen URL to detect SPA navigation tab switches.
+    let lastUrl = location.href;
 
     // Helper function that accepts a DOM element and fires a sequence of click events on it.
     const triggerClick = (el) => {
@@ -38,13 +41,13 @@
             // Find the button element whose visible text content includes the phrase 'Last '.
             .find(btn => btn.textContent && btn.textContent.includes('Last '));
 
-        // LINE 33 (Target string check 1/3): If no toggle button is found, or if it already reads 'Last 6 hours', abort execution.
+        // LINE 49 (Target string check 1/3): If no toggle button is found, or if it already reads 'Last 6 hours', abort execution.
         if (!toggleBtn || toggleBtn.textContent.trim() === 'Last 6 hours') return;
 
         // Activate the processing lock to freeze additional observer calls while running this selection sequence.
         isProcessing = true;
 
-        // LINE 40 (Target string check 2/3): Query menu items to see if the target option 'Last 6 hours' is already present in the DOM.
+        // LINE 56 (Target string check 2/3): Query menu items to see if the target option 'Last 6 hours' is already present in the DOM.
         let targetOption = Array.from(document.querySelectorAll('.dropdown-menu .dropdown-item'))
             // Filter array to find the item matching our target text string.
             .find(opt => opt.textContent && opt.textContent.trim() === 'Last 6 hours');
@@ -71,8 +74,8 @@
         const checkInterval = setInterval(() => {
             // Increment the counter on each tick iteration.
             attempts++;
-
-            // LINE 60 (Target string check 3/3): Search the DOM specifically for the target '.dropdown-menu .dropdown-item' containing 'Last 6 hours'.
+            
+            // LINE 84 (Target string check 3/3): Search the DOM specifically for the target '.dropdown-menu .dropdown-item' containing 'Last 6 hours'.
             targetOption = Array.from(document.querySelectorAll('.dropdown-menu .dropdown-item'))
                 // Filter the elements by their trimmed text content.
                 .find(opt => opt.textContent && opt.textContent.trim() === 'Last 6 hours');
@@ -95,17 +98,47 @@
         }, 0); // Pass 0 milliseconds to execute polling at the maximum speed allowed by the browser engine.
     };
 
+    // Helper to check for route transitions and force execution when landing on /analytics.
+    const checkUrlChange = () => {
+        if (location.href !== lastUrl) {
+            lastUrl = location.href;
+            // Force reset processing flag on tab transition to allow execution on new view.
+            isProcessing = false;
+            if (window.location.pathname.includes('/analytics')) {
+                selectSixHours();
+            }
+        }
+    };
+
+    // Monkey-patch history.pushState and history.replaceState to listen for SPA tab switches.
+    const wrapHistoryMethod = (type) => {
+        const orig = history[type];
+        return function() {
+            const rv = orig.apply(this, arguments);
+            checkUrlChange();
+            return rv;
+        };
+    };
+    history.pushState = wrapHistoryMethod('pushState');
+    history.replaceState = wrapHistoryMethod('replaceState');
+
+    // Listen for browser back/forward navigation.
+    window.addEventListener('popstate', checkUrlChange);
+
     // Initialize a tracking variable to manage requestAnimationFrame scheduling state.
     let pending = false;
-
+    
     // Create a MutationObserver instance to detect dynamically rendered content changes in the SPA.
     const observer = new MutationObserver(() => {
+        // Also check for URL shifts on DOM mutations in case pushState was bypassed.
+        checkUrlChange();
+
         // Exit early if a check is already pending, processing is locked, or current path is not analytics.
         if (pending || isProcessing || !window.location.pathname.includes('/analytics')) return;
 
         // Set pending flag to true to lock out duplicate observer callbacks on the same frame.
         pending = true;
-
+        
         // Pass selection execution to requestAnimationFrame to align with the browser paint cycle and prevent layout thrashing.
         requestAnimationFrame(() => {
             // Run the selection routine.
@@ -118,6 +151,6 @@
     // Configure the observer to watch the document body for added/removed nodes and deep subtree mutations.
     observer.observe(document.body, { childList: true, subtree: true });
 
-    // Execute an initial manual call on script injection to handle scenarios where the target element is already present on page load.
+    // Execute an initial manual call on script injection.
     selectSixHours();
 })();
